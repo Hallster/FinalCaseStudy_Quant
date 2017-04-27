@@ -344,33 +344,63 @@ plot(arrive_delay_year.p[, "mean"], type = "l", ylab="Average arrival delay")
 
 ### Which airports are most likely to be delayed flying into or out of?
 ```{r}
+# Finds delays based on Origin
 pct_delayed_by_origin <- bigtabulate(data,
                                      ccols = "Origin",
-                                     summary.cols = ("DepDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
-
-pct_late_by_dest <- bigtabulate(data,
-                                     ccols = "Dest",
-                                     summary.cols = ("ArrDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
-
-pct_delayed_by_origin_dest <- bigtabulate(data,
-                                     ccols = c("Origin", "Dest"),
-                                     summary.cols = ("DepDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
-
-pct_late_by_origin_dest <- bigtabulate(data,
-                                     ccols = c("Origin", "Dest"),
-                                     summary.cols = ("ArrDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
-
-# stat.names <- dimnames(pct_delayed_by_origin$summary[[1]])[2][[1]]
-# 
-# pct_delayed_by_origin <- cbind(matrix(unlist(pct_delayed_by_origin$summary), byrow = TRUE,
-#                       nrow = length(pct_delayed_by_origin$summary),
-#                       ncol = length(stat.names),
-#                       dimnames = list(origin_indicies, stat.names)),
-#                ValidObs = pct_delayed_by_origin$table)
-# 
-# head(pct_delayed_by_origin)
+                                     summary.cols = ("DepDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
 ```
 ```{r}
-rm(male_data, paramGrid, run_data, birth1, birthNum, btime, bTimes, bTimes1, counts, cTimes, cTimes1, d0, dtime)
+# Orders summary data by mean (3rd value in list)
+pct_delayed_by_origin_top = rev(pct_delayed_by_origin$summary[order(sapply(pct_delayed_by_origin$summary, '[[', i=3))])
+
+# Prints top 5 airports with a departure delay
+head(pct_delayed_by_origin_top$summary)
 ```
+```{r}
+# Finds delayed Arrivals based on Destination
+pct_late_by_dest <- bigtabulate(data,
+                                    ccols = "Dest",
+                                     summary.cols = ("ArrDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+# Orders summary data by mean (3rd value in list)
+pct_late_by_dest_top = pct_late_by_dest$summary[order(sapply(pct_late_by_dest$summary, '[[', i=3))]
+
+# Prints top 5 airports with an arrival delay
+head(pct_late_by_dest_top)
+```
+
+### Which flights with same origin and destiation are most likely to be delayed
+
+```{r}
+# Gets delayed departure flights by Origin and Destination
+pct_delayed_by_origin_dest <- bigtabulate(data,
+                                     ccols = c("Origin", "Dest"),
+                                     summary.cols = ("DepDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+# Orders summary data by mean (3rd value in list)
+pct_delayed_by_origin_dest_top <- pct_delayed_by_origin_dest$summary[order(sapply(pct_delayed_by_origin_dest$summary, '[[', i=3))]
+
+# Prints top 5 flights with a departure delay
+head(pct_delayed_by_origin_dest_top)
+```
+
+```{r}
+# Gets delayed arrival flights by Origin and Destination
+pct_late_by_origin_dest <- bigtabulate(data,
+                                     ccols = c("Origin", "Dest"),
+                                     summary.cols = ("ArrDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+# Orders summary data by mean (3rd value in list)
+pct_late_by_origin_dest_top <- pct_late_by_origin_dest$summary[order(sapply(pct_late_by_origin_dest$summary, '[[', i=3))]
+
+# Prints top 5 flights with an arrival delay
+head(pct_late_by_origin_dest_top)
+```
+
 
