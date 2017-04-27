@@ -92,7 +92,7 @@ data <- read.big.matrix("airlines.csv", header = TRUE,
                         type = "integer",
                         backingfile = "airlines.bin",
                         descriptorfile = "airlines.des",
-                        extraCols = c("age", "Hour"))
+                        extraCols = c("age", "Hour", "Hour_scaled", "Distance_scaled", "Age_scaled"))
 ```
 
 ```{r}
@@ -217,23 +217,6 @@ data[,"Hour"] <- (data[,"CRSDepTime"] / 100)
 
 print(data[,"Hour"])
 ```
-
-```{r}
-library("biganalytics")
-
-blm <- biglm.big.matrix( ArrDelay ~ age, data=data)
-```
-
-```{r}
-summary(blm)
-```
-
-COMPARED TO ERIC RESULTS - Notice the smaller sample size  
-Large data regression model: biglm(formula = formula, data = data, ...)  
-Sample size =  120947440  
-              Coef   (95%    CI)     SE p  
-(Intercept) 7.1203 7.1146 7.1260 0.0028 0  
-age         0.0045 0.0044 0.0046 0.0000 0  
 
 ```{r}
 ## Plot Arrival Dealy by Hour
@@ -403,4 +386,38 @@ pct_late_by_origin_dest_top <- pct_late_by_origin_dest$summary[order(sapply(pct_
 head(pct_late_by_origin_dest_top)
 ```
 
+### Regression
+
+```{r}
+library("biganalytics")
+blm <- biglm.big.matrix( ArrDelay ~ age, data=data)
+```
+
+```{r}
+summary(blm)
+```
+
+
+COMPARED TO ERIC RESULTS - Notice the smaller sample size  
+Large data regression model: biglm(formula = formula, data = data, ...)  
+Sample size =  120947440  
+              Coef   (95%    CI)     SE p  
+(Intercept) 7.1203 7.1146 7.1260 0.0028 0  
+age         0.0045 0.0044 0.0046 0.0000 0  
+
+```{r}
+linReg_hourDist <- biglm.big.matrix( DepDelay ~ Hour+Distance, data=data)
+```
+
+```{r}
+summary(linReg_hourDist)
+```
+
+```{r}
+linReg_hourDistAge <- biglm.big.matrix( DepDelay ~ age+Hour+Distance, data=data)
+```
+
+```{r}
+summary(linReg_hourDistAge)
+```
 
