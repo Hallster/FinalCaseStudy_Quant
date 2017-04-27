@@ -1,0 +1,376 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+## Data sets are downloaded from the Data Expo '09 web site at
+## http://stat-computing.org/dataexpo/2009/the-data.html
+for (year in 1987:2008) {
+    filename <- paste(year, "csv.bz2", sep = ".")
+    if ( !file.exists(filename) ) {
+        url <- paste("http://stat-computing.org/dataexpo/2009/",
+                          year, ".csv.bz2", sep = "")
+        cat("Downloading data file ", filename, "\n", sep = "")
+        download.file(url, filename)
+    }
+}
+```
+
+```{r}
+## Read sample file to get column names and types
+d <- read.csv("2008.csv.bz2")
+integer.columns <- sapply(d, is.integer)
+factor.columns  <- sapply(d, is.factor)
+factor.levels   <- lapply(d[, factor.columns], levels)
+n.rows <- 0L
+```
+
+```{r}
+## Process each file determining the factor levels
+## TODO: Combine with next loop
+for (year in 1987:2008) {
+    filename <- paste(year, "csv.bz2", sep = ".")
+    cat("Processing ", filename, "\n", sep = "")
+    d <- read.csv(filename)
+    n.rows <- n.rows + NROW(d)
+    new.levels <- lapply(d[, factor.columns], levels)
+    for ( i in seq(1, length(factor.levels)) ) {
+        factor.levels[[i]] <- c(factor.levels[[i]], new.levels[[i]])
+    }
+    rm(d)
+}
+save(integer.columns, factor.columns, factor.levels, file = "factors.RData")
+```
+
+```{r}
+## Now convert all factors to integers so we can create a bigmatrix of the data
+col.classes <- rep("integer", length(integer.columns))
+col.classes[factor.columns] <- "character"
+cols  <- which(factor.columns)
+first <- TRUE
+csv.file <- "airlines.csv"   # Write combined integer-only data to this file
+csv.con  <- file(csv.file, open = "w")
+
+for (year in 1987:2008) {
+    file.name <- paste(year, "csv.bz2", sep = ".")
+    cat("Processing ", file.name, "\n", sep = "")
+    d <- read.csv(file.name, colClasses = col.classes)
+    ## Convert the strings to integers
+    for ( i in seq(1, length(factor.levels)) ) {
+        col <- cols[i]
+        d[, col] <- match(d[, col], factor.levels[[i]])
+    }
+    write.table(d, file = csv.con, sep = ",", 
+                row.names = FALSE, col.names = first)
+    first <- FALSE
+}
+close(csv.con)
+```
+
+```{bash}
+echo New format:
+head /home/mint/Documents/AirlineR/airlines.csv
+echo
+echo Original format:
+bzcat /home/mint/Documents/AirlineR/1987.csv.bz2 | head -10
+```
+```{bash}
+echo New format:
+tail /home/mint/Documents/AirlineR/airlines.csv
+echo
+echo Original format:
+bzcat /home/mint/Documents/AirlineR/2008.csv.bz2 | tail -10
+```
+
+```{r}
+## Now convert to a big.matrix
+library("bigmemory")
+# backing.file    <- "airlines.bin"
+# descriptor.file <- "airlines.des"
+data <- read.big.matrix("airlines.csv", header = TRUE,
+                        type = "integer",
+                        backingfile = "airlines.bin",
+                        descriptorfile = "airlines.des",
+                        extraCols = c("age", "Hour"))
+```
+
+```{r}
+#matches eric
+print(dim(data))
+```
+
+```{bash}
+# -rw-r--r--@ 1 eclarson  staff  11785518426 Jan 14 17:06 Data/AirlineDataAll.csv
+# the size of the csv file is a little different due to the different int conversion
+ls -all /home/mint/Documents/AirlineR/airlines.csv
+```
+
+```{bash}
+# -rw-r--r--@ 1 eclarson  staff  14824196281 Jan 15 12:08 Data/airline.bin
+# the resulting bin file is only one byte off - probably not significant
+ls -all /home/mint/Documents/AirlineR/airlines.bin
+```
+
+```{r}
+library("parallel")
+## Use parallel processing if available
+## (Multicore is for "anything-but-Windows" platforms)
+if ( require("parallel") ) {
+    library("doMC")
+    registerDoMC(cores=3)
+} else {
+    warning("Consider registering a multi-core 'foreach' processor.")
+}
+```
+
+```{r}
+library("bigmemory")
+library("bigtabulate")
+
+
+## attach the binary backing file through its descriptor
+descriptor.file <- "airlines.des"
+#data <- attach.big.matrix(dget(descriptor.file))
+data <- attach.big.matrix(descriptor.file)
+```
+
+```{r}
+origin_indicies <- bigsplit(data, "Origin", splitcol = NA_real_)
+```
+
+```{r}
+# lets do some basics by graphing aggregated data
+# not sure why not working
+counts <- sapply(origin_indicies , function(i) length(i))
+```
+
+```{r}
+# Analyzing Age of Plane
+acindices <- bigsplit(data, 'TailNum', splitcol = NA_real_)
+```
+
+```{r}
+# define a 'birthplace' function
+# we use the very first recorded flight for a specific plane as an estimate of its age
+
+# let's first just define e function to get the 
+birthmonth <- function(y) {
+    # assume that the input is one matric of values from one plane
+    
+    # get minimum year for this plane
+    minYear <- min(y[,'Year'], na.rm=TRUE)
+    # get a subset of the dataset for only this minimum year
+    these <- which(y[,'Year']==minYear)
+    # get the minimum month from the years
+    minMonth <- min(y[these,'Month'], na.rm=TRUE) 
+    # now just return the number of months since 00 AD 
+    return(12*minYear + minMonth - 1)
+}
+```
+
+```{r}
+# recall that sapply will send the different indices into the given function
+# here, we send in the indices of the plane, with the year and month
+# this will be done for every plane based upon the acindices grouping
+acStart <- sapply(acindices , function(i) birthmonth(data[i, c('Year','Month'), drop= FALSE]))
+```
+
+```{r}
+#of course, we really wanted this to be a fast computation 
+# and we could split the operations using a foreach parallel loop
+
+# setup the parallel for package (done above)
+# library(doMC)
+# registerDoMC(cores=3)
+```
+
+```{r}
+# now run it--in this example we only get e mild speedup because the computation is 
+# fairly quick and there are a lot of groups to be made
+
+# note that this package handles a bit more gracefully the attached memory mapped files to the worker threads
+# this works similarly to the parallel for loop from your book, but slightly simpler
+acStart <- foreach(i=acindices , .combine=c)%dopar% {
+    return(birthmonth(data[i, c('Year', 'Month'), drop=FALSE]))
+}
+```
+
+(Python code kept for reference for now)  
+Which plane is the youngest?  
+idx = np.argmax(acStart)  
+
+print 'The youngest plane is', list(unique_values['TailNum'])[idx],  
+print 'and flew starting in the year %.0f'%(acStart[idx]/12.0)  
+
+The youngest plane is N5WCAA and flew starting in the year 2009
+
+```{r}
+# now lets save the age of th plane at the time it flew a given route
+data[,"age"] <- data[,"Year"]*12+data[,"Month"]-acStart[data[,"TailNum"]]
+```
+
+```{r}
+# save the scheduled hour of departure
+
+data[,"Hour"] <- (data[,"CRSDepTime"] / 100)
+
+print(data[,"Hour"])
+```
+
+```{r}
+library("biganalytics")
+
+blm <- biglm.big.matrix( ArrDelay ~ age, data=data)
+```
+
+```{r}
+summary(blm)
+```
+
+COMPARED TO ERIC RESULTS - Notice the smaller sample size  
+Large data regression model: biglm(formula = formula, data = data, ...)  
+Sample size =  120947440  
+              Coef   (95%    CI)     SE p  
+(Intercept) 7.1203 7.1146 7.1260 0.0028 0  
+age         0.0045 0.0044 0.0046 0.0000 0  
+
+```{r}
+## Plot Arrival Dealy by Hour
+arrive_delay_hour <- bigtabulate(data,
+                   ccols = "Hour",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+hour.names <- c(0, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 10, 11, 12, 13, 14,
+                15, 16, 17, 18, 19, 20, 21,
+                22, 23, 24)
+
+stat.names <- dimnames(arrive_delay_hour$summary[[1]])[2][[1]]
+
+arrive_delay_hour.p <- cbind(matrix(unlist(arrive_delay_hour$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_hour$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(hour.names, stat.names)),
+               ValidObs = arrive_delay_hour$table)
+
+print(arrive_delay_hour.p)
+```
+
+```{r}
+plot(arrive_delay_hour.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+
+```{r}
+## Plot Arrival Dealy by Day
+arrive_delay_day <- bigtabulate(data,
+                   ccols = "DayOfWeek",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+day.names <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+               "Saturday", "Sunday")
+
+## matches output from http://www.sas.rochester.edu/psc/thestarlab/help/Big-Data-WP.pdf
+stat.names <- dimnames(arrive_delay_day$summary[[1]])[2][[1]]
+arrive_delay_day.p <- cbind(matrix(unlist(arrive_delay_day$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_day$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(day.names, stat.names)),
+               ValidObs = arrive_delay_day$table)
+print(arrive_delay_day.p)
+```
+
+```{r}
+## Figure 1 - X axis are days of the week - nice if it would say so
+## matches output from http://www.sas.rochester.edu/psc/thestarlab/help/Big-Data-WP.pdf
+plot(arrive_delay_day.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+
+```{r}
+## Plot Arrival Dealy by Month
+arrive_delay_month = bigtabulate(data,
+                   ccols = "Month",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+month.names = c("Jan", "Feb", "Mar", "Apr", "May",
+               "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+stat.names <- dimnames(arrive_delay_month$summary[[1]])[2][[1]]
+
+arrive_delay_month.p <- cbind(matrix(unlist(arrive_delay_month$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_month$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(month.names, stat.names)),
+               ValidObs = arrive_delay_month$table)
+
+print(arrive_delay_month.p)
+```
+
+```{r}
+plot(arrive_delay_month.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+
+```{r}
+## Plot Arrival Dealy by Year
+arrive_delay_year = bigtabulate(data,
+                   ccols = "Year",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+year.names = c(1987, 1988, 1989, 1990, 1991, 1992, 1993,
+                1994, 1995, 1996, 1997, 1998, 1999, 2000,
+                2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008)
+
+stat.names <- dimnames(arrive_delay_year$summary[[1]])[2][[1]]
+
+arrive_delay_year.p <- cbind(matrix(unlist(arrive_delay_year$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_year$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(year.names, stat.names)),
+               ValidObs = arrive_delay_year$table)
+
+print(arrive_delay_year.p)
+```
+```{r}
+plot(arrive_delay_year.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+
+### Which airports are most likely to be delayed flying into or out of?
+```{r}
+pct_delayed_by_origin <- bigtabulate(data,
+                                     ccols = "Origin",
+                                     summary.cols = ("DepDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
+
+pct_late_by_dest <- bigtabulate(data,
+                                     ccols = "Dest",
+                                     summary.cols = ("ArrDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
+
+pct_delayed_by_origin_dest <- bigtabulate(data,
+                                     ccols = c("Origin", "Dest"),
+                                     summary.cols = ("DepDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
+
+pct_late_by_origin_dest <- bigtabulate(data,
+                                     ccols = c("Origin", "Dest"),
+                                     summary.cols = ("ArrDelay">15), summary.na.rm = TRUE, splitcol = NA_real_)
+
+# stat.names <- dimnames(pct_delayed_by_origin$summary[[1]])[2][[1]]
+# 
+# pct_delayed_by_origin <- cbind(matrix(unlist(pct_delayed_by_origin$summary), byrow = TRUE,
+#                       nrow = length(pct_delayed_by_origin$summary),
+#                       ncol = length(stat.names),
+#                       dimnames = list(origin_indicies, stat.names)),
+#                ValidObs = pct_delayed_by_origin$table)
+# 
+# head(pct_delayed_by_origin)
+```
+```{r}
+rm(male_data, paramGrid, run_data, birth1, birthNum, btime, bTimes, bTimes1, counts, cTimes, cTimes1, d0, dtime)
+```
+
