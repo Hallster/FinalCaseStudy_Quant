@@ -1,0 +1,10 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.bz2
+airlines.bin
+*.csv
+airlines.des
+*.RData
+FinalCaseStudy_Quant.Rproj
