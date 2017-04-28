@@ -185,6 +185,12 @@ acStart <- sapply(acindices , function(i) birthmonth(data[i, c('Year','Month'), 
 # registerDoMC(cores=3)
 ```
 
+## Feature Preparation and Creation
+
+In preparing the files for analysis, we also wanted to create new features that could be used throughout the rest of the processing. There are 2 features created for the regression with 2 additional features as intermediaries. The first feature is the Hour variable. As visualized in a following section, later hours have more delays. It is transformed from the scheduled departure time (CRSDepTime) to the hour of the day.
+
+The other feature created is the estimated plane age. The age could be a potential factor in delays and will be used during the regression analysis of the data. The age of a plane is estimated from the day of the first flight found in the data. It is calculated by determining the number of months from 0 A.D. for each flight, and the first flight of each plane. The difference results in the number of months between the first flight and each flight, or the estimated plane age in months.
+
 ```{r}
 # now run it--in this example we only get e mild speedup because the computation is 
 # fairly quick and there are a lot of groups to be made
@@ -218,6 +224,18 @@ data[,"Hour"] <- (data[,"CRSDepTime"] / 100)
 print(data[,"Hour"])
 ```
 
+## Flight Delays
+
+According to the FAA, when a schedule airflight departs more than 15 minutes after its scheduled time, it is considered officially delayed. We utilize the same logic for arrival times to determine if a flight is arriving late and is therefore delayed by arrival rather than by departure. Only departures and arrivals 15 minutes past the scheduled time will be considered late in the analysis.
+
+http://aspmhelp.faa.gov/index.php/Types_of_Delay
+
+## Visualization of Average Delay
+
+We first take a look at the average delay for flights from the data set. Below, we look at the different representations for the average delay time for year, month, day, hour, and finally by carrier.
+
+An interesting plot to observe is the average delay by hour. It seems that there is a constant increase in delay times as the day gets going. From 6am to around 8pm, there is a constant increase in the average delay time. It starts less than 2 minutes on average for delays and increases all the way up to nearly 14 minutes. After 8pm, the time decreases again into the early morning, leveling back to "low" levels less than 4 minutes around 2am.
+
 ```{r}
 ## Plot Arrival Dealy by Hour
 arrive_delay_hour <- bigtabulate(data,
@@ -246,6 +264,8 @@ print(arrive_delay_hour.p)
 plot(arrive_delay_hour.p[, "mean"], type = "l", ylab="Average arrival delay")
 ```
 
+The average delay by day of the week does not have much to note. Delays are fairly stable around 8 minutes on average for each day, with day 5, Friday, being higher at 10 minutes. This is most likely due to high travel frequency on that day.
+
 ```{r}
 ## Plot Arrival Dealy by Day
 arrive_delay_day <- bigtabulate(data,
@@ -273,6 +293,8 @@ print(arrive_delay_day.p)
 plot(arrive_delay_day.p[, "mean"], type = "l", ylab="Average arrival delay")
 ```
 
+When we look at the average delay by month, we see December having the largest delay times with an average delay time of nearly 12 minutes. The month of September is the lowest month of delays. These highs and lows are most likely attributed to the flight patterns of people. Many people do not travel in September because school is starting back up and people have already taken time off for the summer. There are also a lot more travel conducted during December because of Christmas, one of the more popular holidays for travel.
+
 ```{r}
 ## Plot Arrival Dealy by Month
 arrive_delay_month = bigtabulate(data,
@@ -298,6 +320,8 @@ print(arrive_delay_month.p)
 ```{r}
 plot(arrive_delay_month.p[, "mean"], type = "l", ylab="Average arrival delay")
 ```
+
+For the average delay by year, there dont seem to be many deviations. There are two significant years higher than 10 minutes in 2000 and 2007. We aloso see several years with low average delays less than 6 minutes including 1991, 1992, 2002, and 2003.
 
 ```{r}
 ## Plot Arrival Dealy by Year
@@ -326,6 +350,11 @@ plot(arrive_delay_year.p[, "mean"], type = "l", ylab="Average arrival delay")
 ```
 
 ### Which airports are most likely to be delayed flying into or out of?
+
+The analysis conducted below looks at the combination of departure delays and arrival delays for each airport in the dataset. We observe the average time of delay for this analysis. The higher the average delay time, regardless of number of flights, the more likely it is that a flight will be delayed.
+
+From our first analysis, we see that there are 4 airports that have an average departure delay time over 100 minutes. This includes the largest average delay for departures of 203 minutes. It is likely this airport has a small number of flights to obtain this average, but they have a minimum delay of 122 minutes and a maximum of 249 minutes.
+
 ```{r}
 # Finds delays based on Origin
 pct_delayed_by_origin <- bigtabulate(data,
@@ -339,6 +368,9 @@ pct_delayed_by_origin_top = rev(pct_delayed_by_origin$summary[order(sapply(pct_d
 # Prints top 5 airports with a departure delay
 head(pct_delayed_by_origin_top$summary)
 ```
+
+We also analyzed the delay in arrivals at destinations.
+
 ```{r}
 # Finds delayed Arrivals based on Destination
 pct_late_by_dest <- bigtabulate(data,
@@ -355,6 +387,10 @@ head(pct_late_by_dest_top)
 ```
 
 ### Which flights with same origin and destiation are most likely to be delayed
+
+The next question we want to answer are which typical flights are more likely to be delayed. Using a similar process as conducted previously, we look at the average time of departure delays and arrival delays and average the value to get the total value of delayed flights. For this question, however, we want all flights where the origin and destination are the same instead of looking at individual airports.
+
+
 
 ```{r}
 # Gets delayed departure flights by Origin and Destination
@@ -388,6 +424,16 @@ head(pct_late_by_origin_dest_top)
 
 ### Regression
 
+The following features will be explore to predict if the flight will have departure delay
+
+The predicted variable will be:
+- Departure Delay (DepDelay)
+
+The explanatory variables:
+- Scheduled departure hour (Hour)
+- Flight distance (Distance)
+- Age of plane (Age)
+
 ```{r}
 library("biganalytics")
 blm <- biglm.big.matrix( ArrDelay ~ age, data=data)
@@ -403,7 +449,16 @@ Large data regression model: biglm(formula = formula, data = data, ...)
 Sample size =  120947440  
               Coef   (95%    CI)     SE p  
 (Intercept) 7.1203 7.1146 7.1260 0.0028 0  
-age         0.0045 0.0044 0.0046 0.0000 0  
+age         0.0045 0.0044 0.0046 0.0000 0 
+
+
+## Regression Results
+
+We conducted regression on the data set and wanted to determine what variables may affect the departure delay time the most. Due to the size of the data set, we selected variables based on previous observations and visualizations. The main variables we wanted to observe were the hour the flight was supposed to take off and the distance it was to travel. We conducted this regression twice. The first run was prior to scaling the data to one another while the second took this scaling into account. Scaling the data reveals comparable levels of importance.
+
+In our first run, we saw that hour was the dominant factor of these two values in predicting the time of delay for a flight. The hour variable had an average coefficient of 0.7263 (±.001) compared to the 0.0015 (±0) value of distance.
+
+This is a skewed value however because the hour value ranges from 0 to 23 and the distance value can be quite large depending on the flight being conducted. To observe this relationship appropriately, we scale the hour and distance values. After doing this scaling, we see coefficients of 3.453 (±.01) for the departure hour and 0.82 (±.06) for the distance. This means that the delay time for departure can be calculated with a factor of 3.453 multiplied by the scaled hour and a factor of 0.82 multiplied by the scaled flight distance. The Mean Squared Error was 866.89, slightly larger than the non-scaled analysis of 804.55, with an R Squared value of -0.067.
 
 ```{r}
 linReg_hourDist <- biglm.big.matrix( DepDelay ~ Hour+Distance, data=data)
@@ -413,6 +468,9 @@ linReg_hourDist <- biglm.big.matrix( DepDelay ~ Hour+Distance, data=data)
 summary(linReg_hourDist)
 ```
 
+Our second analysis added the age of the plane to the analysis. The age of the plane was represented in number of months and was calculated using the difference between the first recorded flight and the flight being conducted. In this analysis, we continued using the hour of departure and distance of the scheduled flight. We saw coefficients of 0.8424 (±.0015) for the hour of departure for the flight, 0.0010 (±.0001) for the distance of the flight, and 0.0001 (±.0001) for the age of the plane. Age confidence interval includes zero, therefore, the evidence points this variable is not a significant predictor. The hour plays the largest role in affecting the delay time when we use these coefficients. The Mean Squared Error of this regression for 40% of the data was 866.01, which is just slightly better than the initial regression using just hour of departure and distance of flight.
+
+
 ```{r}
 linReg_hourDistAge <- biglm.big.matrix( DepDelay ~ age+Hour+Distance, data=data)
 ```
@@ -420,4 +478,6 @@ linReg_hourDistAge <- biglm.big.matrix( DepDelay ~ age+Hour+Distance, data=data)
 ```{r}
 summary(linReg_hourDistAge)
 ```
+
+## Comparison between Python and R Analysis
 
