@@ -1,0 +1,404 @@
+---
+title: "Final - Using R to Analyze the 12GB Airline Dataset"
+author: "Brett Hallum, Chris Ficklin, and Ryan Shuhart"
+date: "April 2017"
+output:
+  html_notebook: default
+  html_document: default
+  pdf_document: default
+subtitle: MSDS 7333-401
+---
+## Introduction
+<br>
+Previously we used Python and Dask to manage the large data set with out-of-core memory. In this project we repeat our analysis using R, bigmemory, and its associated packages to better understand of the strengths and weaknesses of each option to aid our future work.  
+
+Our analysis will address the following topics:
+
+* Which airports are most likely to be delayed flying out of or into?
+* Which flights with same origin and destination are most likely to be delayed?
+* Can you regress how delayed a flight will be before it is delayed?
+* What are the most important features for this regression?
+
+
+## Data Collection and Preprocessing
+<br>
+The first step was to download the yearly CSV files in their compressed format from http://stat-computing.org/dataexpo/2009/the-data.html .
+
+```{r}
+for (year in 1987:2008) {
+    filename <- paste(year, "csv.bz2", sep = ".")
+    if ( !file.exists(filename) ) {
+        url <- paste("http://stat-computing.org/dataexpo/2009/",
+                          year, ".csv.bz2", sep = "")
+        cat("Downloading data file ", filename, "\n", sep = "")
+        download.file(url, filename)
+    }
+}
+```
+<br>Next we read a sample file to store the column names and types.
+```{r}
+d <- read.csv("2008.csv.bz2")
+integer.columns <- sapply(d, is.integer)
+factor.columns  <- sapply(d, is.factor)
+factor.levels   <- lapply(d[, factor.columns], levels)
+n.rows <- 0L
+```
+<br>Then we process the files to save their factor levels.
+```{r}
+for (year in 1987:2008) {
+    filename <- paste(year, "csv.bz2", sep = ".")
+    cat("Processing ", filename, "\n", sep = "")
+    d <- read.csv(filename)
+    n.rows <- n.rows + NROW(d)
+    new.levels <- lapply(d[, factor.columns], levels)
+    for ( i in seq(1, length(factor.levels)) ) {
+        factor.levels[[i]] <- c(factor.levels[[i]], new.levels[[i]])
+    }
+    rm(d)
+}
+save(integer.columns, factor.columns, factor.levels, file = "factors.RData")
+```
+<br>The 'bigmatrix' package requires the factors be converted to unique integers, which is done here.
+```{r}
+col.classes <- rep("integer", length(integer.columns))
+col.classes[factor.columns] <- "character"
+cols  <- which(factor.columns)
+first <- TRUE
+csv.file <- "airlines.csv"   # Write combined integer-only data to this file
+csv.con  <- file(csv.file, open = "w")
+
+for (year in 1987:2008) {
+    file.name <- paste(year, "csv.bz2", sep = ".")
+    cat("Processing ", file.name, "\n", sep = "")
+    d <- read.csv(file.name, colClasses = col.classes)
+    ## Convert the strings to integers
+    for ( i in seq(1, length(factor.levels)) ) {
+        col <- cols[i]
+        d[, col] <- match(d[, col], factor.levels[[i]])
+    }
+    write.table(d, file = csv.con, sep = ",", 
+                row.names = FALSE, col.names = first)
+    first <- FALSE
+}
+close(csv.con)
+```
+## Feature Creation and Preparation
+
+In preparing the files for analysis, we also wanted to create new features that could be used throughout the rest of the processing.
+
+There are 2 features created for the regression with 2 additional features as intermediaries. The first feature is the Hour variable. As visualized in a following section, later hours have more delays. It is transformed from the scheduled departure time (CRSDepTime) to the hour of the day.
+
+The other feature created is the estimated plane age. The age could be a potential factor in delays and will be used during the regression analysis of the data. The age of a plane is estimated from the day of the first flight found in the data. It is calculated by determining the number of months from 0 A.D. for each flight, and the first flight of each plane. The difference results in the number of months between the first flight and each flight, or the estimated plane age in months.
+
+### Convert to a big.matrix
+
+Add some text here
+```{r}
+library("bigmemory")
+data <- read.big.matrix("airlines.csv", header = TRUE,
+                        type = "integer",
+                        backingfile = "airlines.bin",
+                        descriptorfile = "airlines.des",
+                        extraCols = c("age", "Hour", "Hour_scaled", "Distance_scaled", "Age_scaled"))
+```
+<br>Parallel processing using doMC is available only on Unix based platforms (Mac, Linux, etc). From our experience it did not seem to make a large difference for the remaining processes.
+```{r}
+library("parallel")
+if ( require("parallel") ) {
+    library("doMC")
+    registerDoMC(cores=3)
+} else {
+    warning("Consider registering a multi-core 'foreach' processor.")
+}
+```
+### Analyzing by Age of Plane
+<br>We attach the binary backing file through its descriptor file.
+```{r}
+library("bigmemory")
+library("bigtabulate")
+descriptor.file <- "airlines.des"
+data <- attach.big.matrix(descriptor.file)
+```
+<br>Not sure what to say here.
+```{r}
+origin_indicies <- bigsplit(data, "Origin", splitcol = NA_real_)
+acindices <- bigsplit(data, 'TailNum', splitcol = NA_real_)
+```
+<br>Then we create a function to calculate the birth month of each plane (tail number) based on its first recorded flight.
+```{r}
+birthmonth <- function(y) {
+    # get minimum year for this plane
+    minYear <- min(y[,'Year'], na.rm=TRUE)
+    # get a subset of the dataset for only this minimum year
+    these <- which(y[,'Year']==minYear)
+    # get the minimum month from the years
+    minMonth <- min(y[these,'Month'], na.rm=TRUE) 
+    # now just return the number of months since 00 AD 
+    return(12*minYear + minMonth - 1)
+}
+```
+<br>Next, Sapply sends the aircraft indices with the year and month of each plane to the function based on the groupings in 'acindices'.
+```{r}
+acStart <- sapply(acindices , function(i) birthmonth(data[i, c('Year','Month'), drop= FALSE]))
+```
+
+```{r}
+acStart <- foreach(i=acindices , .combine=c)%dopar% {
+    return(birthmonth(data[i, c('Year', 'Month'), drop=FALSE]))
+}
+```
+<br>In this step we save each plane's age at each flight.
+```{r}
+data[,"age"] <- data[,"Year"]*12+data[,"Month"]-acStart[data[,"TailNum"]]
+```
+<br>Finally, we record the scheduled departure time.
+```{r}
+# save the scheduled hour of departure
+data[,"Hour"] <- (data[,"CRSDepTime"] / 100)
+print(data[,"Hour"])
+```
+## Analysis
+
+### Flight Delays
+
+According to the FAA, when a schedule airflight departs more than 15 minutes after its scheduled time, it is considered officially delayed. We utilize the same logic for arrival times to determine if a flight is arriving late and is therefore delayed by arrival rather than by departure. Only departures and arrivals 15 minutes past the scheduled time will be considered late in the analysis.
+
+http://aspmhelp.faa.gov/index.php/Types_of_Delay
+
+### Visualization of Average Delay
+
+We first take a look at the average delay for flights from the data set. Below, we look at the different representations for the average delay time for year, month, day, hour, and finally by carrier.
+
+An interesting plot to observe is the average delay by hour. It seems that there is a constant increase in delay times as the day gets going. From 6am to around 8pm, there is a constant increase in the average delay time. It starts less than 2 minutes on average for delays and increases all the way up to nearly 14 minutes. After 8pm, the time decreases again into the early morning, leveling back to "low" levels less than 4 minutes around 2am.
+```{r}
+## Plot Arrival Delay by Hour
+arrive_delay_hour <- bigtabulate(data,
+                   ccols = "Hour",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+hour.names <- c(0, 1, 2, 3, 4, 5, 6, 7,
+                8, 9, 10, 11, 12, 13, 14,
+                15, 16, 17, 18, 19, 20, 21,
+                22, 23, 24)
+
+stat.names <- dimnames(arrive_delay_hour$summary[[1]])[2][[1]]
+
+arrive_delay_hour.p <- cbind(matrix(unlist(arrive_delay_hour$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_hour$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(hour.names, stat.names)),
+               ValidObs = arrive_delay_hour$table)
+
+print(arrive_delay_hour.p)
+```
+
+```{r}
+plot(arrive_delay_hour.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+The average delay by day of the week does not have much to note. Delays are fairly stable around 8 minutes on average for each day, with day 5, Friday, being higher at 10 minutes. This is most likely due to high travel frequency on that day.
+```{r}
+## Plot Arrival Delay by Day
+arrive_delay_day <- bigtabulate(data,
+                   ccols = "DayOfWeek",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+day.names <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+               "Saturday", "Sunday")
+
+stat.names <- dimnames(arrive_delay_day$summary[[1]])[2][[1]]
+arrive_delay_day.p <- cbind(matrix(unlist(arrive_delay_day$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_day$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(day.names, stat.names)),
+               ValidObs = arrive_delay_day$table)
+print(arrive_delay_day.p)
+```
+
+```{r}
+## Figure 1 - X axis are days of the week
+plot(arrive_delay_day.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+When we look at the average delay by month, we see December having the largest delay times with an average delay time of nearly 12 minutes. The month of September is the lowest month of delays. These highs and lows are most likely attributed to the flight patterns of people. Many people do not travel in September because school is starting back up and people have already taken time off for the summer. There are also a lot more travel conducted during December because of Christmas, one of the more popular holidays for travel.
+```{r}
+## Plot Arrival Delay by Month
+arrive_delay_month = bigtabulate(data,
+                   ccols = "Month",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+month.names = c("Jan", "Feb", "Mar", "Apr", "May",
+               "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+stat.names <- dimnames(arrive_delay_month$summary[[1]])[2][[1]]
+
+arrive_delay_month.p <- cbind(matrix(unlist(arrive_delay_month$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_month$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(month.names, stat.names)),
+               ValidObs = arrive_delay_month$table)
+
+print(arrive_delay_month.p)
+```
+
+```{r}
+plot(arrive_delay_month.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+For the average delay by year, there don't seem to be many deviations. There are two significant years higher than 10 minutes in 2000 and 2007. We also see several years with low average delays less than 6 minutes including 1991, 1992, 2002, and 2003.
+```{r}
+## Plot Arrival Delay by Year
+arrive_delay_year = bigtabulate(data,
+                   ccols = "Year",
+                   summary.cols = "ArrDelay", summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+year.names = c(1987, 1988, 1989, 1990, 1991, 1992, 1993,
+                1994, 1995, 1996, 1997, 1998, 1999, 2000,
+                2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008)
+
+stat.names <- dimnames(arrive_delay_year$summary[[1]])[2][[1]]
+
+arrive_delay_year.p <- cbind(matrix(unlist(arrive_delay_year$summary), byrow = TRUE,
+                      nrow = length(arrive_delay_year$summary),
+                      ncol = length(stat.names),
+                      dimnames = list(year.names, stat.names)),
+               ValidObs = arrive_delay_year$table)
+
+print(arrive_delay_year.p)
+```
+```{r}
+plot(arrive_delay_year.p[, "mean"], type = "l", ylab="Average arrival delay")
+```
+### Which airports are most likely to be delayed flying into or out of?
+
+The analysis conducted below looks at the combination of departure delays and arrival delays for each airport in the dataset. We observe the average time of delay for this analysis. The higher the average delay time, regardless of number of flights, the more likely it is that a flight will be delayed.
+
+From our first analysis, we see that there are 4 airports that have an average departure delay time over 100 minutes. This includes the largest average delay for departures of 203 minutes. It is likely this airport has a small number of flights to obtain this average, but they have a minimum delay of 122 minutes and a maximum of 249 minutes.
+```{r}
+# Finds delays based on Origin
+pct_delayed_by_origin <- bigtabulate(data,
+                                     ccols = "Origin",
+                                     summary.cols = ("DepDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
+```
+```{r}
+# Orders summary data by mean (3rd value in list)
+pct_delayed_by_origin_top = rev(pct_delayed_by_origin$summary[order(sapply(pct_delayed_by_origin$summary, '[[', i=3))])
+
+# Prints top 5 airports with a departure delay
+head(pct_delayed_by_origin_top$summary)
+```
+We also analyzed the delay in arrivals at destinations.
+```{r}
+# Finds delayed Arrivals based on Destination
+pct_late_by_dest <- bigtabulate(data,
+                                    ccols = "Dest",
+                                     summary.cols = ("ArrDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+# Orders summary data by mean (3rd value in list)
+pct_late_by_dest_top = pct_late_by_dest$summary[order(sapply(pct_late_by_dest$summary, '[[', i=3))]
+
+# Prints top 5 airports with an arrival delay
+head(pct_late_by_dest_top)
+```
+### Which flights with same origin and destination are most likely to be delayed
+
+The next question we want to answer are which typical flights are more likely to be delayed. Using a similar process as conducted previously, we look at the average time of departure delays and arrival delays and average the value to get the total value of delayed flights. For this question, however, we want all flights where the origin and destination are the same instead of looking at individual airports.
+```{r}
+# Gets delayed departure flights by Origin and Destination
+pct_delayed_by_origin_dest <- bigtabulate(data,
+                                     ccols = c("Origin", "Dest"),
+                                     summary.cols = ("DepDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+# Orders summary data by mean (3rd value in list)
+pct_delayed_by_origin_dest_top <- pct_delayed_by_origin_dest$summary[order(sapply(pct_delayed_by_origin_dest$summary, '[[', i=3))]
+
+# Prints top 5 flights with a departure delay
+head(pct_delayed_by_origin_dest_top)
+```
+
+```{r}
+# Gets delayed arrival flights by Origin and Destination
+pct_late_by_origin_dest <- bigtabulate(data,
+                                     ccols = c("Origin", "Dest"),
+                                     summary.cols = ("ArrDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
+```
+
+```{r}
+# Orders summary data by mean (3rd value in list)
+pct_late_by_origin_dest_top <- pct_late_by_origin_dest$summary[order(sapply(pct_late_by_origin_dest$summary, '[[', i=3))]
+
+# Prints top 5 flights with an arrival delay
+head(pct_late_by_origin_dest_top)
+```
+### Regression
+
+The following features will be explore to predict if the flight will have departure delay
+
+The predicted variable will be:
+- Departure Delay (DepDelay)
+
+The explanatory variables:
+- Scheduled departure hour (Hour)
+- Flight distance (Distance)
+- Age of plane (Age)
+```{r}
+library("biganalytics")
+blm <- biglm.big.matrix( ArrDelay ~ age, data=data)
+```
+
+```{r}
+summary(blm)
+```
+## Regression Results
+
+We conducted regression on the data set and wanted to determine what variables may affect the departure delay time the most. Due to the size of the data set, we selected variables based on previous observations and visualizations. The main variables we wanted to observe were the hour the flight was supposed to take off and the distance it was to travel. We conducted this regression twice. The first run was prior to scaling the data to one another while the second took this scaling into account. Scaling the data reveals comparable levels of importance.
+
+In our first run, we saw that hour was the dominant factor of these two values in predicting the time of delay for a flight. The hour variable had an average coefficient of 0.7263 (?.001) compared to the 0.0015 (?0) value of distance.
+
+This is a skewed value however because the hour value ranges from 0 to 23 and the distance value can be quite large depending on the flight being conducted. To observe this relationship appropriately, we scale the hour and distance values. After doing this scaling, we see coefficients of 3.453 (?.01) for the departure hour and 0.82 (?.06) for the distance. This means that the delay time for departure can be calculated with a factor of 3.453 multiplied by the scaled hour and a factor of 0.82 multiplied by the scaled flight distance. The Mean Squared Error was 866.89, slightly larger than the non-scaled analysis of 804.55, with an R Squared value of -0.067.
+```{r}
+linReg_hourDist <- biglm.big.matrix( DepDelay ~ Hour+Distance, data=data)
+```
+
+```{r}
+summary(linReg_hourDist)
+```
+Our second analysis added the age of the plane to the analysis. The age of the plane was represented in number of months and was calculated using the difference between the first recorded flight and the flight being conducted. In this analysis, we continued using the hour of departure and distance of the scheduled flight. We saw coefficients of 0.8424 (?.0015) for the hour of departure for the flight, 0.0010 (?.0001) for the distance of the flight, and 0.0001 (?.0001) for the age of the plane. Age confidence interval includes zero, therefore, the evidence points this variable is not a significant predictor. The hour plays the largest role in affecting the delay time when we use these coefficients. The Mean Squared Error of this regression for 40% of the data was 866.01, which is just slightly better than the initial regression using just hour of departure and distance of flight.
+```{r}
+linReg_hourDistAge <- biglm.big.matrix( DepDelay ~ age+Hour+Distance, data=data)
+```
+
+```{r}
+summary(linReg_hourDistAge)
+```
+## Conclusion
+
+####Comparison of R and Python for Large Datasets
+
+The first run of this project was all completed in python. We attempted a second run, trying to do the same visualizations and analysis, using R for our code base. Through the use of these different languages to achieve the same goal, we noticed several important differences. The first difference we saw was in the ability to process the raw data and add new fields to the data set. Python was far better at completing this task than R was. With python, we could add fields as needed without any preprocessing and slicing the code was much easier. Adding a column in Dask or pandas was as simple as just creating a new column in the dataframe. In R, with the use of bigtabulate and bigmatrix, any extra columns that needed to be added had to be defined ahead of time. If an idea for a column came up, we would have to run the costly function read.big.matrix again to pre-assign the columns and have them prepared for further analysis.
+
+We also found it much easier to process the data in python than R after the respective data frames were created. With bigmatrix, R converted to data into layered vectors. This caused some difficulty in accessing the data easily and being able to manipulate many layers at the same time. Python made this task much easier by being able to utilize the nature of data frames to pick and pull data as needed and where appropriate. These differences were especially noticeable when trying to slice the data out to find which airports and which flights were most likely to have delays.
+
+R did shine when it came to calculating the actual statistics of the data. Although both languages got very similar values for the data set, we noticed that R was able to perform the task more efficiently and in a better time. If the set up and preprocessing to necessary to get it in the right format had been easier, we feel that R would have been more practical due to the fact that it was better at running the statistics.
+In the end, we believe that Python would be the better option over all for large data set processing. It is possible this data set as it is formatted just lends to python better. There could be other sets that may require more statistical finesse that R would be best suited for. However, with everything we ran across except for calculating statistics, python was by far the choice we would use for future analysis of large data sets.
+
+## Bibliography
+
+* <a href="http://www.dropbox.com/s/r82gsu388qj3sy2/Split_Apply_Combine%20in%20R%20and%20Python.ipynb?dl=0">Eric Larson - Split Apply Combine in R and Python</a>
+
+* <a href="http://www.cybaea.net/journal/2010/08/05/Big-data-for-R/">CYBAEA - Big Data for R</a>
+
+* <a href="https://cran.r-project.org/web/packages/bigmemory/bigmemory.pdf">Package 'bigmemory' documentation</a>
+
+* <a href="https://cran.r-project.org/web/packages/bigtabulate/bigtabulate.pdf">Package 'bigtabulate' documentation</a>
+
+* <a href="http://www.sas.rochester.edu/psc/thestarlab/help/Big-Data-WP.pdf">Big Data Analysis with Revolution R Enterprise</a>
