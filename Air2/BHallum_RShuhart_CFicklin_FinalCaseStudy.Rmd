@@ -197,7 +197,7 @@ print(arrive_delay_hour.p)
 ```{r}
 plot(arrive_delay_hour.p[, "mean"], type = "l", ylab="Average arrival delay")
 ```
-The average delay by day of the week does not have much to note. Delays are fairly stable around 8 minutes on average for each day, with day 5, Friday, being higher at 10 minutes. This is most likely due to high travel frequency on that day.
+<br>The average delay by day of the week does not have much to note. Delays are fairly stable around 8 minutes on average for each day, with day 5, Friday, being higher at 10 minutes. This is most likely due to high travel frequency on that day.
 ```{r}
 ## Plot Arrival Delay by Day
 arrive_delay_day <- bigtabulate(data,
@@ -217,12 +217,12 @@ arrive_delay_day.p <- cbind(matrix(unlist(arrive_delay_day$summary), byrow = TRU
                ValidObs = arrive_delay_day$table)
 print(arrive_delay_day.p)
 ```
-
+The x axis is the day of the week beginning with Monday.
 ```{r}
-## Figure 1 - X axis are days of the week
+
 plot(arrive_delay_day.p[, "mean"], type = "l", ylab="Average arrival delay")
 ```
-When we look at the average delay by month, we see December having the largest delay times with an average delay time of nearly 12 minutes. The month of September is the lowest month of delays. These highs and lows are most likely attributed to the flight patterns of people. Many people do not travel in September because school is starting back up and people have already taken time off for the summer. There are also a lot more travel conducted during December because of Christmas, one of the more popular holidays for travel.
+<br>When we look at the average delay by month, we see December having the largest delay times with an average delay time of nearly 12 minutes. The month of September is the lowest month of delays. These highs and lows are most likely attributed to the flight patterns of people. Many people do not travel in September because school is starting back up and people have already taken time off for the summer. There are also a lot more travel conducted during December because of Christmas, one of the more popular holidays for travel.
 ```{r}
 ## Plot Arrival Delay by Month
 arrive_delay_month = bigtabulate(data,
@@ -248,7 +248,7 @@ print(arrive_delay_month.p)
 ```{r}
 plot(arrive_delay_month.p[, "mean"], type = "l", ylab="Average arrival delay")
 ```
-For the average delay by year, there don't seem to be many deviations. There are two significant years higher than 10 minutes in 2000 and 2007. We also see several years with low average delays less than 6 minutes including 1991, 1992, 2002, and 2003.
+<br>For the average delay by year, there don't seem to be many deviations. There are two significant years higher than 10 minutes in 2000 and 2007. We also see several years with low average delays less than 6 minutes including 1991, 1992, 2002, and 2003.
 ```{r}
 ## Plot Arrival Delay by Year
 arrive_delay_year = bigtabulate(data,
@@ -279,46 +279,41 @@ plot(arrive_delay_year.p[, "mean"], type = "l", ylab="Average arrival delay")
 The analysis conducted below looks at the combination of departure delays and arrival delays for each airport in the dataset. We observe the average time of delay for this analysis. The higher the average delay time, regardless of number of flights, the more likely it is that a flight will be delayed.
 
 From our first analysis, we see that there are 4 airports that have an average departure delay time over 100 minutes. This includes the largest average delay for departures of 203 minutes. It is likely this airport has a small number of flights to obtain this average, but they have a minimum delay of 122 minutes and a maximum of 249 minutes.
+
+We find the delayed flights by origin and order the data by their mean values.
 ```{r}
-# Finds delays based on Origin
 pct_delayed_by_origin <- bigtabulate(data,
                                      ccols = "Origin",
                                      summary.cols = ("DepDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
-```
-```{r}
-# Orders summary data by mean (3rd value in list)
+
 pct_delayed_by_origin_top = rev(pct_delayed_by_origin$summary[order(sapply(pct_delayed_by_origin$summary, '[[', i=3))])
 
-# Prints top 5 airports with a departure delay
 head(pct_delayed_by_origin_top$summary)
 ```
-We also analyzed the delay in arrivals at destinations.
+<br>We also analyze the delays in arrival at the destinations, again by mean.
 ```{r}
-# Finds delayed Arrivals based on Destination
 pct_late_by_dest <- bigtabulate(data,
                                     ccols = "Dest",
                                      summary.cols = ("ArrDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
-```
 
-```{r}
 # Orders summary data by mean (3rd value in list)
 pct_late_by_dest_top = pct_late_by_dest$summary[order(sapply(pct_late_by_dest$summary, '[[', i=3))]
 
-# Prints top 5 airports with an arrival delay
+# Top 5 airports with an arrival delay
 head(pct_late_by_dest_top)
 ```
 ### Which flights with same origin and destination are most likely to be delayed
 
-The next question we want to answer are which typical flights are more likely to be delayed. Using a similar process as conducted previously, we look at the average time of departure delays and arrival delays and average the value to get the total value of delayed flights. For this question, however, we want all flights where the origin and destination are the same instead of looking at individual airports.
+The next question we want to answer are which typical flights are more likely to be delayed. Using a similar process as conducted previously, we look at the average time of departure delays and arrival delays and average the value to get the total value of delayed flights. For this question, however, we want all flights where the origin and destination are the same instead of looking at individual airports.  
+
+Here we find the delayed departure flights by Origin and Destination.
 ```{r}
-# Gets delayed departure flights by Origin and Destination
 pct_delayed_by_origin_dest <- bigtabulate(data,
                                      ccols = c("Origin", "Dest"),
                                      summary.cols = ("DepDelay"), summary.na.rm = TRUE, splitcol = NA_real_)
 ```
-
+<br>Now we order the summary data for the delay by origin.
 ```{r}
-# Orders summary data by mean (3rd value in list)
 pct_delayed_by_origin_dest_top <- pct_delayed_by_origin_dest$summary[order(sapply(pct_delayed_by_origin_dest$summary, '[[', i=3))]
 
 # Prints top 5 flights with a departure delay
